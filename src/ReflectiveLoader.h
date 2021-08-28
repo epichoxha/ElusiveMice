@@ -83,6 +83,14 @@ typedef void (WINAPI* OUTPUTDEBUGSTR)(const char*);
 #endif
 #endif
 
+#if _M_X64 || _M_IX86
+#if _M_X64
+#define WIN_X64
+#else
+#define WIN_X86
+#endif
+#endif
+
 // Check GCC
 #if __GNUC__
 #if __x86_64__ || __ppc64__
@@ -264,5 +272,132 @@ typedef struct
     WORD    type:4;
 } IMAGE_RELOC, *PIMAGE_RELOC;
 //===============================================================================================//
+
+// Win 10
+typedef struct _API_SET_VALUE_ENTRY_V6
+{
+    ULONG Flags;
+    ULONG NameOffset;
+    ULONG NameLength;
+    ULONG ValueOffset;
+    ULONG ValueLength;
+} API_SET_VALUE_ENTRY_V6, * PAPI_SET_VALUE_ENTRY_V6;
+
+typedef struct _API_SET_NAMESPACE_HASH_ENTRY_V6
+{
+    ULONG Hash;
+    ULONG Index;
+} API_SET_NAMESPACE_HASH_ENTRY_V6, * PAPI_SET_NAMESPACE_HASH_ENTRY_V6;
+
+typedef struct _API_SET_NAMESPACE_ENTRY_V6
+{
+    ULONG Flags;
+    ULONG NameOffset;
+    ULONG Size;
+    ULONG NameLength;
+    ULONG DataOffset;
+    ULONG Count;
+} API_SET_NAMESPACE_ENTRY_V6, * PAPI_SET_NAMESPACE_ENTRY_V6;
+
+typedef struct _API_SET_NAMESPACE_ARRAY_V6
+{
+    ULONG Version;
+    ULONG Size;
+    ULONG Flags;
+    ULONG Count;
+    ULONG DataOffset;
+    ULONG HashOffset;
+    ULONG Multiplier;
+    API_SET_NAMESPACE_ENTRY_V6 Array[ANYSIZE_ARRAY];
+} API_SET_NAMESPACE_ARRAY_V6, * PAPI_SET_NAMESPACE_ARRAY_V6;
+
+// Windows 8.1
+typedef struct _API_SET_VALUE_ENTRY_V4
+{
+    ULONG Flags;
+    ULONG NameOffset;
+    ULONG NameLength;
+    ULONG ValueOffset;
+    ULONG ValueLength;
+} API_SET_VALUE_ENTRY_V4, * PAPI_SET_VALUE_ENTRY_V4;
+
+typedef struct _API_SET_VALUE_ARRAY_V4
+{
+    ULONG Flags;
+    ULONG Count;
+    API_SET_VALUE_ENTRY_V4 Array[ANYSIZE_ARRAY];
+} API_SET_VALUE_ARRAY_V4, * PAPI_SET_VALUE_ARRAY_V4;
+
+typedef struct _API_SET_NAMESPACE_ENTRY_V4
+{
+    ULONG Flags;
+    ULONG NameOffset;
+    ULONG NameLength;
+    ULONG AliasOffset;
+    ULONG AliasLength;
+    ULONG DataOffset;
+} API_SET_NAMESPACE_ENTRY_V4, * PAPI_SET_NAMESPACE_ENTRY_V4;
+
+typedef struct _API_SET_NAMESPACE_ARRAY_V4
+{
+    ULONG Version;
+    ULONG Size;
+    ULONG Flags;
+    ULONG Count;
+    API_SET_NAMESPACE_ENTRY_V4 Array[ANYSIZE_ARRAY];
+} API_SET_NAMESPACE_ARRAY_V4, * PAPI_SET_NAMESPACE_ARRAY_V4;
+
+// Windows 7/8
+typedef struct _API_SET_VALUE_ENTRY_V2
+{
+    ULONG NameOffset;
+    ULONG NameLength;
+    ULONG ValueOffset;
+    ULONG ValueLength;
+} API_SET_VALUE_ENTRY_V2, * PAPI_SET_VALUE_ENTRY_V2;
+
+typedef struct _API_SET_VALUE_ARRAY_V2
+{
+    ULONG Count;
+    API_SET_VALUE_ENTRY_V2 Array[ANYSIZE_ARRAY];
+} API_SET_VALUE_ARRAY_V2, * PAPI_SET_VALUE_ARRAY_V2;
+
+typedef struct _API_SET_NAMESPACE_ENTRY_V2
+{
+    ULONG NameOffset;
+    ULONG NameLength;
+    ULONG DataOffset;
+} API_SET_NAMESPACE_ENTRY_V2, * PAPI_SET_NAMESPACE_ENTRY_V2;
+
+typedef struct _API_SET_NAMESPACE_ARRAY_V2
+{
+    ULONG Version;
+    ULONG Count;
+    API_SET_NAMESPACE_ENTRY_V2 Array[ANYSIZE_ARRAY];
+} API_SET_NAMESPACE_ARRAY_V2, * PAPI_SET_NAMESPACE_ARRAY_V2;
+
+typedef HMODULE(WINAPI* LOADLIBRARYA)(LPCSTR);
+typedef FARPROC(WINAPI* GETPROCADDRESS)(HMODULE, LPCSTR);
+
+
+
+__forceinline BOOL ResolveOwnImports(struct FunctionPointers* fptrs, LOADLIBRARYA pLoadLibraryA, GETPROCADDRESS pGetProcAddress);
+__forceinline BOOL RefreshPE(char* stomp, LOADLIBRARYA pLoadLibraryA, GETPROCADDRESS pGetProcAddress);
+__forceinline HMODULE CustomLoadLibrary(struct FunctionPointers* fptrs, const PWCHAR wszFullDllName, const PWCHAR wszBaseDllName, ULONG_PTR pDllBase);
+__forceinline HMODULE CustomGetModuleHandleW(struct FunctionPointers* fptrs, const PWSTR wszModule);
+__forceinline FARPROC WINAPI CustomGetProcAddressEx(struct FunctionPointers* fptrs, HMODULE hModule, const PCHAR lpProcName, PWSTR wszOriginalModule);
+__forceinline VOID ScanAndFixModule(struct FunctionPointers* fptrs, PCHAR pKnown, PCHAR pSuspect, PWCHAR wszBaseDllName);
+__forceinline VOID ScanAndFixSection(struct FunctionPointers* fptrs, PWCHAR wszBaseDllName, PCHAR szSectionName, PCHAR pKnown, PCHAR pSuspect, size_t stLength);
+
+__forceinline _PPEB GetProcessEnvironmentBlock();
+__forceinline PLDR_DATA_TABLE_ENTRY GetInMemoryOrderModuleList();
+
+
+__forceinline PWCHAR GetRedirectedName(struct FunctionPointers* fptrs, const PWSTR wszImportingModule, const PWSTR wszVirtualModule, SIZE_T* stSize);
+__forceinline PWCHAR GetRedirectedName_V6(struct FunctionPointers* fptrs, const PWSTR wszImportingModule, const PWSTR wszVirtualModule, SIZE_T* stSize);
+__forceinline PWCHAR GetRedirectedName_V4(struct FunctionPointers* fptrs, const PWSTR wszImportingModule, const PWSTR wszVirtualModule, SIZE_T* stSize);
+__forceinline PWCHAR GetRedirectedName_V2(struct FunctionPointers* fptrs, const PWSTR wszImportingModule, const PWSTR wszVirtualModule, SIZE_T* stSize);
+
+
 #endif
 //===============================================================================================//
