@@ -83,6 +83,14 @@ typedef void (WINAPI* OUTPUTDEBUGSTR)(const char*);
 #endif
 #endif
 
+#if _M_X64 || _M_IX86
+#if _M_X64
+#define WIN_X64
+#else
+#define WIN_X86
+#endif
+#endif
+
 // Check GCC
 #if __GNUC__
 #if __x86_64__ || __ppc64__
@@ -264,5 +272,6 @@ typedef struct
     WORD    type:4;
 } IMAGE_RELOC, *PIMAGE_RELOC;
 //===============================================================================================//
+
 #endif
 //===============================================================================================//

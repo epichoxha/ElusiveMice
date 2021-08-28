@@ -46,16 +46,6 @@ typedef BOOL (WINAPI * DLLMAIN)( HINSTANCE, DWORD, LPVOID );
 
 #define DLLEXPORT   __declspec( dllexport ) 
 
-#if defined _M_X64
-#define REFLECTIVEDLLINJECTION_VIA_LOADREMOTELIBRARYR
-#define REFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN
-#define WIN_X64
-#elif defined _M_IX86
-#define REFLECTIVEDLLINJECTION_VIA_LOADREMOTELIBRARYR
-#define REFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN
-#define WIN_X86
-#endif
-
 
 //===============================================================================================//
 #endif

