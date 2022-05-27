@@ -146,3 +146,22 @@ set BEACON_RDLL_GENERATE_LOCAL {
 	warn("========== Running 'BEACON_RDLL_GENERATE_LOCAL' for DLL " . $1 . " with architecture " . $3 . " Beacon ID " . $4 . " GetModuleHandleA " . $5 . " GetProcAddress " . $6 . " ==========");
 	return generate_my_dll($1, $2, $3);
 }
+
+# BEACON_RDLL_SIZE HOOK
+# Override the beacon loader to load beacons with larger space reserved for the
+# User Defined Reflective Loader function.
+#
+# Arguments
+#  $1 = dll name
+#  $2 = arch
+#
+# Returns
+#  a string representing the size to use for the Reflective Loader.
+#  valid values are: [0, 5, 100]
+set BEACON_RDLL_SIZE {
+    print_info("UDRL - BEACON_RDLL_SIZE hook");
+
+    $size = 100;
+    print_info("UDRL - Use the $size $+ K Reflective Loader");
+    return "$size";
+}

